@@ -6,7 +6,6 @@ const authRoutes = require("./routes/auth.js");
 const { Server } = require("socket.io");
 const http = require("http");
 const Messages = require("./models/Messages.js");
-const { Socket } = require("dgram");
 const User = require("./models/User.js");
 dotenv.config();
 
@@ -25,7 +24,7 @@ app.use(cors());
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("Mongodb connected."))
-  .catch(() => console.error(error));
+  .catch((error) => console.error(error));
 
 app.use("/auth", authRoutes);
 
@@ -36,6 +35,7 @@ io.on("connection", (socket) => {
   socket.on("join", (username) => {
     socket.username = username;
     socket.join(username);
+    console.log(`${username} joined room: ${username}`);
   });
 
   socket.on("send_message", async (data) => {
@@ -48,12 +48,9 @@ io.on("connection", (socket) => {
     });
     await newMessage.save();
 
-    io.to(receiver).emit("receive_message", newMessage);
+    io.to(sender).emit("message_sent_confirmation", newMessage);
 
-    io.to(sender).emit("message_status", {
-      messageId: newMessage._id,
-      status: "sent",
-    });
+    io.to(receiver).emit("receive_message", newMessage);
   });
 
   socket.on("mark_delivered", async ({ sender, receiver }) => {
@@ -61,6 +58,7 @@ io.on("connection", (socket) => {
       { sender, receiver, status: "sent" },
       { $set: { status: "delivered" } }
     );
+
     io.to(sender).emit("message_status_bulk", {
       sender: receiver,
       status: "delivered",
@@ -69,7 +67,7 @@ io.on("connection", (socket) => {
 
   socket.on("mark_seen", async ({ sender, receiver }) => {
     await Messages.updateMany(
-      { sender, receiver, status: { $ne: "seen" } },
+      { sender, receiver, status: { $in: ["sent", "delivered"] }},
       { $set: { status: "seen" } }
     );
     io.to(sender).emit("message_status_bulk", {
@@ -78,10 +76,10 @@ io.on("connection", (socket) => {
     });
   });
 
-
-  socket.on("typing", ({sender, receiver, isTyping}) => {
-    io.to(receiver).emit("typing_status", {sender, isTyping})
-  })
+  socket.on("typing", ({ sender, receiver, isTyping }) => {
+    console.log(`Typing event: ${sender} -> ${receiver}, isTyping: ${isTyping}`);
+    io.to(receiver).emit("typing_status", { sender, isTyping });
+  });
 
   socket.on("disconnect", () => {
     console.log("User Disconnected", socket.id);
